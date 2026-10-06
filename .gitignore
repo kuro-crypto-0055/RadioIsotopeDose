@@ -1,0 +1,4 @@
+*.rinote
+*backup*.json
+*バックアップ*.json
+private/
