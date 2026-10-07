@@ -14,9 +14,12 @@ export async function syncSnapshot(session,pack){
  const content={version:1,id:session.id,name:session.name,createdAt:session.createdAt,values};
  const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(content)));
  const hash=[...new Uint8Array(digest)].map(n=>n.toString(16).padStart(2,'0')).join('');
- const name=session.name.replace(/[\\/:?*\[\]]/g,'_').slice(0,10);
- return {...content,hash,title:`RI_${session.createdAt.slice(0,10)}_${name}_${hash}`};
+ const date=new Date(Date.parse(session.createdAt)+9*60*60*1000).toISOString().slice(0,10);
+ return {...content,hash,title:date};
 }
+export function availableTitle(base,sheets){const titles=new Set(sheets.map(s=>s.properties.title));let title=base,n=2;while(titles.has(title))title=`${base} (${n++})`;return title;}
+export function snapshotSheet(sheets,snapshot){return sheets.find(s=>s.developerMetadata?.some(m=>m.metadataKey==='ri_note_snapshot'&&m.metadataValue===snapshot.hash)||s.properties.title.startsWith('RI_')&&s.properties.title.endsWith('_'+snapshot.hash))?.properties;}
+export function snapshotMetadata(snapshot,sheetId){return {createDeveloperMetadata:{developerMetadata:{metadataKey:'ri_note_snapshot',metadataValue:snapshot.hash,location:{sheetId},visibility:'DOCUMENT'}}};}
 export function sheetIdFromURL(value){
  const s=value.trim();if(/^[A-Za-z0-9_-]{20,100}$/.test(s))return s;
  let u;try{u=new URL(s);}catch{throw Error('GoogleスプレッドシートのURLを入力してください。');}
@@ -30,6 +33,7 @@ export function createSheetBatch(snapshot,sheetId){
  {addSheet:{properties:{sheetId,title:snapshot.title,gridProperties:{rowCount:Math.max(100,snapshot.values.length),columnCount:4,frozenRowCount:1}}}},
  {updateCells:{start:{sheetId,rowIndex:0,columnIndex:0},rows:cells,fields:'userEnteredValue'}},
  {repeatCell:{range:{sheetId,startRowIndex:1,startColumnIndex:2,endColumnIndex:3},cell:{userEnteredFormat:{numberFormat:{type:'NUMBER',pattern:'0.00'}}},fields:'userEnteredFormat.numberFormat'}},
- {autoResizeDimensions:{dimensions:{sheetId,dimension:'COLUMNS',startIndex:0,endIndex:4}}}
+ {autoResizeDimensions:{dimensions:{sheetId,dimension:'COLUMNS',startIndex:0,endIndex:4}}},
+ snapshotMetadata(snapshot,sheetId)
  ]};
 }

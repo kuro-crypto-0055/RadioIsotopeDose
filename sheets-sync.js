@@ -1,4 +1,4 @@
-import {createSheetBatch,sameValues} from './sync-model.js';
+import {createSheetBatch,sameValues,availableTitle,snapshotSheet,snapshotMetadata} from './sync-model.js';
 const SCOPE='https://www.googleapis.com/auth/spreadsheets';
 let libraryPromise,token=null;
 export function disconnectGoogle(){token=null;}
@@ -24,14 +24,26 @@ async function api(id,suffix,options={}){
  if(!response.ok){const err=Error(response.status===401?'Googleにログインし直してください。':response.status===403?'編集権限・Sheets APIの有効化・大学の利用制限を確認してください。':response.status===404?'同期先が見つかりません。URLと共有設定を確認してください。':response.status===429?'Googleの処理上限です。1分ほど待って再同期してください。':`Googleへの同期に失敗しました（${response.status}）。`);err.status=response.status;if(response.status===401)token=null;throw err;}return await response.json();
  }catch(e){if(e.name==='AbortError')throw Error('同期がタイムアウトしました。端末データは残っています。同じ操作で再同期できます。');throw e;}finally{clearTimeout(timer);}
 }
-export async function inspectSpreadsheet(id){return api(id,'?fields=spreadsheetId,spreadsheetUrl,properties(title),sheets(properties(sheetId,title))');}
+export async function inspectSpreadsheet(id){return api(id,'?fields=spreadsheetId,spreadsheetUrl,properties(title),sheets(properties(sheetId,title),developerMetadata(metadataKey,metadataValue))');}
 async function verifySheet(id,sheet,snapshot){const range="'"+sheet.title.replaceAll("'","''")+"'!A:D";const result=await api(id,'/values/'+encodeURIComponent(range)+'?valueRenderOption=UNFORMATTED_VALUE');if(!sameValues(result.values||[],snapshot.values))throw Error('同期済みの表がGoogle側で変更されています。元の表を上書きせず停止しました。');return {sheetId:sheet.sheetId,title:sheet.title};}
-// Immutable snapshots: exact retries reuse a tab; edits create another tab, never overwrite cloud data.
+// Identity lives in sheet metadata; visible titles remain short and can be renamed.
 export async function uploadSnapshot(id,snapshot){
- let meta=await inspectSpreadsheet(id),existing=meta.sheets?.map(s=>s.properties).find(s=>s.title===snapshot.title);
- if(existing)return verifySheet(id,existing,snapshot);
- const used=new Set(meta.sheets?.map(s=>s.properties.sheetId)||[]);let sheetId;do{sheetId=crypto.getRandomValues(new Uint32Array(1))[0]&0x7fffffff;}while(used.has(sheetId));
- try{await api(id,':batchUpdate',{method:'POST',body:JSON.stringify(createSheetBatch(snapshot,sheetId))});}
- catch(error){if(error.status!==400)throw error;meta=await inspectSpreadsheet(id);existing=meta.sheets?.map(s=>s.properties).find(s=>s.title===snapshot.title);if(!existing)throw error;return verifySheet(id,existing,snapshot);}
- return verifySheet(id,{sheetId,title:snapshot.title},snapshot);
+ for(let attempt=0;attempt<3;attempt++){
+  const meta=await inspectSpreadsheet(id),sheets=meta.sheets||[],existing=snapshotSheet(sheets,snapshot);
+  if(existing){
+   const result=await verifySheet(id,existing,snapshot);
+   if(existing.title.startsWith('RI_')&&existing.title.endsWith('_'+snapshot.hash)){
+    const title=availableTitle(snapshot.title,sheets);
+    try{await api(id,':batchUpdate',{method:'POST',body:JSON.stringify({requests:[{updateSheetProperties:{properties:{sheetId:existing.sheetId,title},fields:'title'}},snapshotMetadata(snapshot,existing.sheetId)]})});}
+    catch(error){if(error.status===400&&attempt<2)continue;throw error;}
+    return {...result,title};
+   }
+   return result;
+  }
+  const title=availableTitle(snapshot.title,sheets),used=new Set(sheets.map(s=>s.properties.sheetId));let sheetId;
+  do{sheetId=crypto.getRandomValues(new Uint32Array(1))[0]&0x7fffffff;}while(used.has(sheetId));
+  try{await api(id,':batchUpdate',{method:'POST',body:JSON.stringify(createSheetBatch({...snapshot,title},sheetId))});}
+  catch(error){if(error.status===400&&attempt<2)continue;throw error;}
+  return verifySheet(id,{sheetId,title},snapshot);
+ }
 }
