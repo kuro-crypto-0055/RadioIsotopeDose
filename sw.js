@@ -1,4 +1,4 @@
-const CACHE='ri-note-public-v2.0.2-'+self.registration.scope;
+const CACHE='ri-note-public-v2.0.3-'+self.registration.scope;
 const ASSETS=['./','./index.html','./styles.css','./app.js','./model.js','./storage.js','./manifest.webmanifest','./icon.svg','./icon-192.png','./icon-512.png'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS))));
 self.addEventListener('activate',event=>event.waitUntil(self.clients.claim()));
