@@ -1,3 +1,4 @@
+import {bindSync} from './sync-ui.js';
 import {validatePackage,packageId,pointsOf,validDose,formatTime,rows,csv,column,stats,validateSession,validateBackup} from './model.js';
 import {openDB,get,update} from './storage.js';
 const $=s=>document.querySelector(s),labels={measured:'入力済み',skipped:'測定せず',unable:'測定不能',empty:'未入力'};
@@ -22,7 +23,7 @@ function updateNetwork(){$('#network').textContent=navigator.onLine?'接続あ�
 function marker(id){const r=record(id),status=r?.status||'empty',b=el('button',`marker ${status}`,id);b.type='button';b.dataset.point=id;b.setAttribute('aria-label',`測定地点 ${id}、${labels[status]}${status==='measured'?'、'+r.value:''}`);if(status!=='empty')b.append(el('span','badge',status==='measured'?'✓':status==='skipped'?'せず':'不能'));b.onclick=()=>openEntry(id);return b;}
 function render(){
  const ready=!!pack;$('#welcome').hidden=ready;$('#measurement-layout').hidden=!ready;$('#export-open').disabled=!ready;$('#new-session').disabled=!ready;
- if(!ready)return;
+ $('#retention-note').textContent=`端末内は最新50回まで。未同期を含め、作成日時の古い回から自動削除します。${state.lastCleanup?' 最終整理：'+formatTime(state.lastCleanup.at)+'／'+state.lastCleanup.count+'回削除':''}`;if(!ready)return;
  $('#session-select').replaceChildren(...[...state.sessions].reverse().map(s=>{const o=el('option','',s.name);o.value=s.id;o.selected=s.id===state.active;return o;}));
  const total=points.length,s=stats(session(),pack),done=total-s.empty;
  $('#progress-count').replaceChildren(document.createTextNode(done),el('small','',` / ${total}`));$('#progress-bar').style.width=`${done/total*100}%`;$('#progress-detail').textContent=`数値 ${s.measured} · せず ${s.skipped} · 不能 ${s.unable} · 未入力 ${s.empty}`;$('#plan-count').textContent=`${pack.plans.length} PLANS`;$('#dataset-label').textContent=pack.title;
@@ -57,7 +58,7 @@ async function checkImages(data){for(const p of data.plans)await new Promise((re
 function openImport(){clearNotice($('#import-dialog'));pending=null;$('#package-file').value='';$('#import-summary').textContent='ファイルは端末内で処理します。アップロードは行いません。';$('#import-confirm').disabled=true;$('#import-dialog').showModal();}
 async function readPackage(file){
  if(!file||importing)return;importing=true;pending=null;$('#import-confirm').disabled=true;$('#package-file').disabled=true;$('#import-summary').textContent='図面セットを確認しています…';
- try{if(file.size>45e6)throw Error('図面セットが大きすぎます。');const data=validatePackage(JSON.parse(await file.text()));await checkImages(data);const hash=await packageId(data);pending={id:hash,data};$('#import-summary').textContent=`${data.title}\n${data.plans.length}図面・${pointsOf(data).length}地点\nこの端末に保存します。現在の測定記録は残ります。`;$('#import-confirm').disabled=false;}
+ try{if(file.size>45e6)throw Error('図面セットが大きすぎます。');const data=validatePackage(JSON.parse(await file.text()));await checkImages(data);const hash=await packageId(data);pending={id:hash,data};$('#import-summary').textContent=`${data.title}\n${data.plans.length}図面・${pointsOf(data).length}地点\nこの端末に保存します。端末内は最新50回まで保持します。`;$('#import-confirm').disabled=false;}
  catch(e){$('#import-summary').textContent='読み込めません：'+e.message;}finally{importing=false;$('#package-file').disabled=false;}
 }
 async function acceptPackage(){if(!pending||importing)return;importing=true;$('#import-confirm').disabled=true;const selected=pending;
@@ -65,7 +66,7 @@ async function acceptPackage(){if(!pending||importing)return;importing=true;$('#
  catch(e){$('#import-summary').textContent='保存できません：'+e.message;$('#import-confirm').disabled=false;}finally{importing=false;}
 }
 async function backup(){try{const snapshot=await get(db,'state','app'),ids=[...new Set(snapshot.sessions.map(s=>s.packageId))],packages=[];for(const id of ids)packages.push({id,data:await get(db,'packages',id)});download(`RI-NOTE-backup-${Date.now()}.json`,JSON.stringify({format:'ri-note-backup',version:2,sessions:snapshot.sessions,packages}),'application/json');toast('図面と記録を含むバックアップを保存しました');}catch(e){error('バックアップを作成できません。'+e.message);}}
-async function restore(file){if(!file)return;try{if(file.size>100e6)throw Error('バックアップが大きすぎます。');const data=await validateBackup(JSON.parse(await file.text()));for(const p of data.packages)await checkImages(p.data);if(!confirm(`${data.sessions.length}件の測定回と図面をコピーとして追加します。既存記録は残します。よろしいですか？`))return;await change(s=>{for(const original of data.sessions){const added=structuredClone(original);added.id=crypto.randomUUID();added.name=(added.name.slice(0,190)+'（復元）');s.sessions.push(added);s.active=added.id;}},data.packages);currentPlan=null;await activate();if($('#export-dialog').open)exportView();toast('図面と測定記録を復元しました');await prepareOffline();}catch(e){toast('復元できません：'+e.message);}finally{$('#restore-file').value='';}}
+async function restore(file){if(!file)return;try{if(file.size>100e6)throw Error('バックアップが大きすぎます。');const data=await validateBackup(JSON.parse(await file.text()));for(const p of data.packages)await checkImages(p.data);if(!confirm(`${data.sessions.length}件の測定回と図面をコピーとして追加します。最新50回を超える分は、未同期も含め古い順に削除します。よろしいですか？`))return;await change(s=>{for(const original of data.sessions){const added=structuredClone(original);added.id=crypto.randomUUID();added.name=(added.name.slice(0,190)+'（復元）');s.sessions.push(added);s.active=added.id;}},data.packages);currentPlan=null;await activate();if($('#export-dialog').open)exportView();toast('図面と測定記録を復元しました');await prepareOffline();}catch(e){toast('復元できません：'+e.message);}finally{$('#restore-file').value='';}}
 async function prepareOffline(){
  $('#prepare').disabled=true;$('#offline-status').textContent='アプリの保存を確認しています…';
  try{if(!('serviceWorker'in navigator)||!isSecureContext)throw Error('HTTPSで開いてください。');await navigator.serviceWorker.register('./sw.js',{scope:'./'});const reg=await Promise.race([navigator.serviceWorker.ready,new Promise((_,reject)=>setTimeout(()=>reject(Error('アプリの準備がタイムアウトしました。')),20000))]);
@@ -74,6 +75,7 @@ async function prepareOffline(){
  }catch(e){$('#offline-status').textContent='未完了：'+e.message;}finally{$('#prepare').disabled=false;}
 }
 function bind(){
+ bindSync({session,readSession:async id=>(await get(db,'state','app'))?.sessions.find(s=>s.id===id),pack:()=>pack,change,download,toast,refresh:activate,dbName});
  try{const saved=localStorage.getItem(dbName+':marker-size');if(['auto','28','36','44','52','60'].includes(saved))$('#marker-size').value=saved;}catch{}
  $('#marker-size').onchange=()=>{sizeMarkers();try{localStorage.setItem(dbName+':marker-size',$('#marker-size').value);}catch{}};
 
@@ -90,7 +92,7 @@ function bind(){
 }
 async function boot(){
  bind();updateNetwork();window.addEventListener('online',updateNetwork);window.addEventListener('offline',updateNetwork);
- try{db=await openDB(dbName);state=(await get(db,'state','app'))||state;if(state.version!==2||!Array.isArray(state.sessions))throw Error('保存データの形式を確認してください。');await activate();}
+ try{db=await openDB(dbName);state=(await get(db,'state','app'))||state;if(state.version!==2||!Array.isArray(state.sessions))throw Error('保存データの形式を確認してください。');if(state.sessions.length>50)await change(()=>{});await activate();}
  catch(e){db=null;error('端末保存を開けません。入力を開始せず、バックアップとブラウザ設定を確認してください。 '+e.message);$('#import-open').disabled=true;$('#welcome-import').disabled=true;$('#welcome-restore').disabled=true;}
  await prepareOffline();
 }

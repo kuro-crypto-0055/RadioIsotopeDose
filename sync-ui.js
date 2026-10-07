@@ -1,0 +1,27 @@
+import {sheetIdFromURL,syncSnapshot} from './sync-model.js';
+import {loadGoogle,authorizeGoogle,inspectSpreadsheet,uploadSnapshot,disconnectGoogle,googleReady} from './sheets-sync.js';
+export function bindSync(app){
+ const $=s=>document.querySelector(s),key=app.dbName+':google-sync-config';let config=null,verified=null,busy=false,current=null;
+ const status=text=>{$('#sync-status').textContent=text;};
+ function parse(value){if(!value||!/^\d+-[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$/.test(value.clientId||''))throw Error('OAuthクライアントIDを確認してください。');return {format:'ri-note-sync-config',version:1,clientId:value.clientId,spreadsheetId:sheetIdFromURL(value.spreadsheetId)};}
+ try{config=parse(JSON.parse(localStorage.getItem(key)));}catch{}
+ function fill(){ $('#sync-client').value=config?.clientId||'';$('#sync-sheet').value=config?'https://docs.google.com/spreadsheets/d/'+config.spreadsheetId+'/edit':'';$('#sync-target').textContent=config?'同期先：'+config.spreadsheetId:'同期先はまだ設定されていません。';}
+ function lock(value){busy=value;['sync-close','sync-prepare','sync-login','sync-send','sync-config-save','sync-config-export','sync-config-file','sync-client','sync-sheet'].forEach(id=>$('#'+id).disabled=value);if(!value){$('#sync-login').disabled=!window.google?.accounts?.oauth2||!config;$('#sync-send').disabled=!verified||!googleReady()||!current;}}
+ function save(value){config=parse(value);localStorage.setItem(key,JSON.stringify(config));verified=null;disconnectGoogle();fill();lock(false);status('設定を保存しました。「Google接続を準備」から進めてください。');}
+ async function open(){const s=app.session();if(!s)return;current={id:s.id,session:structuredClone(s),pack:app.pack()};verified=null;fill();$('#sync-result').hidden=true;$('#sync-settings').open=!config;$('#sync-session').textContent='測定回：'+s.name;const old=$('#sync-dialog .dialog-notice');if(old)old.hidden=true;status('端末内のデータは同期後も残ります（保存上限50回）。Google接続を準備してください。');$('#sync-local-state').textContent='同期状態を確認しています…';$('#sync-dialog').showModal();lock(false);try{const snapshot=await syncSnapshot(current.session,current.pack),receipt=s.lastSync;$('#sync-local-state').textContent=receipt&&receipt.spreadsheetId===config?.spreadsheetId&&receipt.hash===snapshot.hash?'この内容は設定先へ同期済みです。':'この内容は設定先へ未同期、または前回同期後に変更されています。';}catch{$('#sync-local-state').textContent='同期状態を確認できません。';}}
+ $('#sync-open').onclick=open;$('#sync-close').onclick=()=>$('#sync-dialog').close();$('#sync-dialog').addEventListener('cancel',e=>{if(busy)e.preventDefault();});
+ $('#sync-config-save').onclick=()=>{try{save({clientId:$('#sync-client').value.trim(),spreadsheetId:$('#sync-sheet').value});}catch(e){status(e.message);}};
+ $('#sync-config-export').onclick=()=>{if(!config){status('先に設定を保存してください。');return;}app.download('RI-NOTE-sync-config.json',JSON.stringify(config,null,2),'application/json');status('設定ファイルの保存を開始しました。チーム内で共有してください。ログイン用のトークンは含まれません。');};
+ $('#sync-config-file').onchange=async e=>{try{const file=e.target.files[0];if(!file)return;if(file.size>10000)throw Error('設定ファイルが大きすぎます。');const value=JSON.parse(await file.text());if(value.format!=='ri-note-sync-config'||value.version!==1)throw Error('同期設定ファイルを選択してください。');save(value);}catch(e){status(e.message);}finally{e.target.value='';}};
+ $('#sync-prepare').onclick=async()=>{if(!config){status('先に同期先を設定してください。');$('#sync-settings').open=true;return;}if(!navigator.onLine){status('オフラインです。通信が戻ってから操作してください。');return;}lock(true);status('Google接続を準備しています…');try{await loadGoogle();status('準備できました。「Googleにログイン」を押してください。');}catch(e){status(e.message);}finally{lock(false);}};
+ $('#sync-login').onclick=async()=>{if(!config||busy)return;lock(true);verified=null;status('Googleログインを待っています…');try{await authorizeGoogle(config.clientId);const meta=await inspectSpreadsheet(config.spreadsheetId);verified={id:config.spreadsheetId,title:meta.properties.title};$('#sync-target').textContent='送信先：'+verified.title;status('接続先を確認しました。「この測定回を同期」を押すと地点番号・図面名・線量・測定日時を送信します。');}catch(e){status(e.message);}finally{lock(false);}};
+ $('#sync-send').onclick=async()=>{if(busy||!current||!verified||!googleReady())return;if(!navigator.onLine){status('オフラインです。端末データは残っています。');return;}const target={...verified},selected=current;lock(true);status('測定表を同期しています…');try{
+ // Read fresh local data immediately before creating the snapshot; do not send a stale dialog copy.
+ const active=await app.readSession(selected.id);if(!active||app.session()?.id!==selected.id)throw Error('測定回が切り替わりました。画面を閉じて選び直してください。');
+ const snapshot=await syncSnapshot(structuredClone(active),selected.pack),result=await uploadSnapshot(target.id,snapshot);let retained=false;
+ await app.change(s=>{const item=s.sessions.find(x=>x.id===selected.id);if(item){retained=true;item.lastSync={spreadsheetId:target.id,sheetId:result.sheetId,hash:snapshot.hash,at:new Date().toISOString()};}});
+ await app.refresh();const link=$('#sync-result');link.href='https://docs.google.com/spreadsheets/d/'+target.id+'/edit#gid='+result.sheetId;link.hidden=false;
+ const latest=app.session();const unchanged=latest?.id===selected.id&&(await syncSnapshot(latest,selected.pack)).hash===snapshot.hash;
+ $('#sync-local-state').textContent=retained&&unchanged?'この内容は設定先へ同期済みです。':'端末の現在の内容は未同期です。';status(!retained?'Googleへの保存は完了しました。対象の測定回は端末の保存上限により削除されています。':unchanged?'同期完了。Google側の表と送信内容が一致することを確認しました。':'送信した時点の同期は完了しました。その後の変更は、もう一度同期してください。');
+ }catch(e){status(e.message+' 同期完了とは扱っていません。端末データを残したまま、再同期できます。');}finally{lock(false);}};
+}

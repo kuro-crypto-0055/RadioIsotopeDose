@@ -1,5 +1,5 @@
-const CACHE='ri-note-public-v2.0.3-r2-'+self.registration.scope;
-const ASSETS=['./','./index.html','./styles.css','./app.js','./model.js','./storage.js','./manifest.webmanifest','./icon.svg','./icon-192.png','./icon-512.png'];
+const CACHE='ri-note-public-v3.0.0-r1-'+self.registration.scope;
+const ASSETS=['./','./index.html','./styles.css','./app.js','./model.js','./storage.js','./sync-model.js','./sheets-sync.js','./sync-ui.js','./manifest.webmanifest','./icon.svg','./icon-192.png','./icon-512.png'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS.map(url=>new Request(url,{cache:'reload'}))))));
 self.addEventListener('activate',event=>event.waitUntil(self.clients.claim()));
 self.addEventListener('fetch',event=>{
