@@ -1,4 +1,4 @@
-import {rows} from './model.js';
+import {rows,facilitySheetLabel} from './model.js';
 export const SESSION_LIMIT=50;
 // Delete the oldest created measurement rounds, regardless of sync state.
 export function retainRecent(state,limit=SESSION_LIMIT){
@@ -15,7 +15,7 @@ export async function syncSnapshot(session,pack){
  const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(content)));
  const hash=[...new Uint8Array(digest)].map(n=>n.toString(16).padStart(2,'0')).join('');
  const date=new Date(Date.parse(session.createdAt)+9*60*60*1000).toISOString().slice(0,10);
- return {...content,hash,title:date};
+ return {...content,hash,title:date+' '+facilitySheetLabel(pack).replace(/[\\/:?*\[\]\x00-\x1f]/g,'_').trim().slice(0,40)};
 }
 export function availableTitle(base,sheets){const titles=new Set(sheets.map(s=>s.properties.title));let title=base,n=2;while(titles.has(title))title=`${base} (${n++})`;return title;}
 export function snapshotSheet(sheets,snapshot){return sheets.find(s=>s.developerMetadata?.some(m=>m.metadataKey==='ri_note_snapshot'&&m.metadataValue===snapshot.hash)||s.properties.title.startsWith('RI_')&&s.properties.title.endsWith('_'+snapshot.hash))?.properties;}

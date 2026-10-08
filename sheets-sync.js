@@ -32,9 +32,9 @@ export async function uploadSnapshot(id,snapshot){
   const meta=await inspectSpreadsheet(id),sheets=meta.sheets||[],existing=snapshotSheet(sheets,snapshot);
   if(existing){
    const result=await verifySheet(id,existing,snapshot);
-   if(existing.title.startsWith('RI_')&&existing.title.endsWith('_'+snapshot.hash)){
+   if((existing.title.startsWith('RI_')&&existing.title.endsWith('_'+snapshot.hash))||/^\d{4}-\d{2}-\d{2}( \(\d+\))?$/.test(existing.title)){
     const title=availableTitle(snapshot.title,sheets);
-    try{await api(id,':batchUpdate',{method:'POST',body:JSON.stringify({requests:[{updateSheetProperties:{properties:{sheetId:existing.sheetId,title},fields:'title'}},snapshotMetadata(snapshot,existing.sheetId)]})});}
+    try{await api(id,':batchUpdate',{method:'POST',body:JSON.stringify({requests:[{updateSheetProperties:{properties:{sheetId:existing.sheetId,title},fields:'title'}},...(existing.title.startsWith('RI_')?[snapshotMetadata(snapshot,existing.sheetId)]:[])]})});}
     catch(error){if(error.status===400&&attempt<2)continue;throw error;}
     return {...result,title};
    }
