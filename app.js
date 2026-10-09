@@ -77,6 +77,9 @@ async function prepareOffline(){
  }catch(e){$('#offline-status').textContent='未完了：'+e.message;}finally{$('#prepare').disabled=false;}
 }
 function bind(){
+ const panelMedia=matchMedia('(min-width: 761px)');const panelLayout=()=>{$('#session-panel').open=panelMedia.matches;};panelLayout();panelMedia.addEventListener('change',panelLayout);
+ let focusScroll=0;function focusMap(value){if(value)focusScroll=window.scrollY;document.body.classList.toggle('map-focused',value);document.querySelector('.topbar').inert=value;document.querySelector('.sidebar').inert=value;$('#map-focus').textContent=value?'全画面を閉じる':'図面を全画面表示';$('#map-focus').setAttribute('aria-pressed',String(value));if(!value)window.scrollTo(0,focusScroll);requestAnimationFrame(fitMap);}
+ $('#map-focus').onclick=()=>focusMap(!document.body.classList.contains('map-focused'));document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!document.querySelector('dialog[open]'))focusMap(false);});
  bindSync({session,readSession:async id=>(await get(db,'state','app'))?.sessions.find(s=>s.id===id),pack:()=>pack,change,download,toast,refresh:activate,dbName});
  try{const saved=localStorage.getItem(dbName+':marker-size');if(['auto','28','36','44','52','60'].includes(saved))$('#marker-size').value=saved;}catch{}
  $('#marker-size').onchange=()=>{sizeMarkers();try{localStorage.setItem(dbName+':marker-size',$('#marker-size').value);}catch{}};
